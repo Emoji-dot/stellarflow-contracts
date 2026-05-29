@@ -444,6 +444,15 @@ pub struct BypassDisabledEvent {
     pub admin: Address,
 }
 
+// New event for logging price variance (percentage change in basis points)
+#[soroban_sdk::contractevent]
+pub struct PriceVarianceEvent {
+    pub asset: Symbol,
+    pub old_price: i128,
+    pub new_price: i128,
+    pub variance_bps: i128,
+}
+
 /// Emitted when a relayer's staked collateral is slashed by governance.
 #[soroban_sdk::contractevent]
 pub struct SlashExecutedEvent {
@@ -1324,6 +1333,7 @@ impl PriceOracle {
             let storage = env.storage().persistent();
             let key = DataKey::VerifiedPrice(asset.clone());
             let existing: Option<PriceData> = storage.get(&key);
+            let old_price_opt = existing.as_ref().map(|p| p.price);
             let is_new_asset = existing.is_none();
 
             _track_asset(&env, asset.clone());
@@ -1379,6 +1389,17 @@ impl PriceOracle {
                     asset: asset.clone(),
                     price: normalized,
                 });
+            }
+            // Emit variance event for price change
+            if let Some(old_price) = old_price_opt {
+                let variance_opt = calculate_percentage_change_bps(old_price, normalized);
+                env.events().publish_event(&PriceVarianceEvent {
+                    asset: asset.clone(),
+                    old_price,
+                    new_price: normalized,
+                    variance_bps: variance_opt.unwrap_or(0),
+                });
+                log_event(&env, Symbol::new(&env, "price_variance"), asset.clone(), variance_opt.unwrap_or(0));
             }
 
             // Notify subscribers of the price update
