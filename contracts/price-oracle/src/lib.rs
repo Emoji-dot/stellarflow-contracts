@@ -291,6 +291,14 @@ pub trait TokenContractTrait {
 /// This value is used when no configurable max deviation percentage has been set.
 const MAX_PERCENT_CHANGE_BPS: i128 = 1_000;
 
+/// Maximum age (in seconds) for a rate map entry before consumer reads are rejected.
+///
+/// 60 ledgers × ~5 s/ledger = 300 s ≈ 5 minutes.  Any `PriceData` whose
+/// `timestamp` is older than this boundary causes `get_price` / `get_last_price`
+/// to panic with `Error::StaleRateData`, protecting downstream protocols from
+/// acting on prices that were calculated during a relayer outage.
+pub const MAX_RATE_AGE_SECONDS: u64 = 300;
+
 /// Percentage move threshold (5% = 500 basis points) above which a "cross_call"
 /// volatility event is published so downstream contracts (e.g. liquidation bots)
 /// can react without polling.
@@ -349,6 +357,12 @@ pub enum Error {
     NoPreviousConfig = 23,
     /// Contract has not been initialized yet.
     NotInitialized = 24,
+    /// Rate map entry exceeds the maximum allowed age (MAX_RATE_AGE_SECONDS).
+    ///
+    /// Raised by `get_price` and `get_last_price` when the stored timestamp is
+    /// older than `current_timestamp - MAX_RATE_AGE_SECONDS`, indicating the
+    /// relayer has not refreshed the price within the permitted window.
+    StaleRateData = 25,
 }
 
 #[contract]
@@ -479,6 +493,23 @@ fn _require_initialized(env: &Env) {
 /// `true` if the price is stale (expired), `false` otherwise
 pub fn is_stale(current_time: u64, stored_timestamp: u64, ttl: u64) -> bool {
     current_time >= stored_timestamp.saturating_add(ttl)
+}
+
+/// Panic with `Error::StaleRateData` if the rate map entry has exceeded the
+/// maximum allowed age (`MAX_RATE_AGE_SECONDS`).
+///
+/// This guard is applied on every consumer read (`get_price`, `get_last_price`)
+/// to ensure downstream protocols never act on prices that were calculated
+/// during a relayer connectivity outage.
+///
+/// # Arguments
+/// * `env` - The contract environment (used for `panic_with_error!`)
+/// * `current_time` - The current ledger timestamp
+/// * `stored_timestamp` - The `timestamp` field of the `PriceData` entry
+pub fn enforce_rate_map_max_age(env: &Env, current_time: u64, stored_timestamp: u64) {
+    if current_time > stored_timestamp.saturating_add(MAX_RATE_AGE_SECONDS) {
+        panic_with_error!(env, Error::StaleRateData);
+    }
 }
 
 /// Acquire the reentrancy lock for set_price.
@@ -1010,6 +1041,8 @@ impl PriceOracle {
         match env.storage().persistent().get::<DataKey, PriceData>(&key) {
             Some(price_data) => {
                 let now = env.ledger().timestamp();
+                // Issue #262: panic if the rate map entry exceeds the hard maximum age.
+                enforce_rate_map_max_age(&env, now, price_data.timestamp);
                 if is_stale(now, price_data.timestamp, price_data.ttl) {
                     return Err(Error::AssetNotFound);
                 }

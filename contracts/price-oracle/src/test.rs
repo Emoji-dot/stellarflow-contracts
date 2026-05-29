@@ -2774,3 +2774,87 @@ fn test_enable_bypass_requires_admin() {
     // non_admin is not in the admin list — should panic.
     client.enable_bypass_safety_checks(&non_admin);
 }
+
+// ── Issue #262: rate-map max-age enforcement ─────────────────────────────────
+
+/// `get_price` must succeed when the stored timestamp is within MAX_RATE_AGE_SECONDS.
+#[test]
+fn test_get_price_within_max_age_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+
+    let asset = symbol_short!("NGN");
+    // Store price at t=1_000.
+    env.ledger().set_timestamp(1_000);
+    env.ledger().set_sequence_number(1);
+    client.set_price(&asset, &1_500_i128, &2u32, &86_400u64);
+
+    // Advance to t=1_299 — still within the 300-second boundary.
+    env.ledger().set_timestamp(1_299);
+    let result = client.try_get_price(&asset, &true);
+    assert!(result.is_ok(), "expected Ok within max age window");
+}
+
+/// `get_price` must panic with `StaleRateData` when the stored timestamp is
+/// older than `current_time - MAX_RATE_AGE_SECONDS` (300 s).
+#[test]
+#[should_panic]
+fn test_get_price_panics_when_rate_map_exceeds_max_age() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+
+    let asset = symbol_short!("NGN");
+    // Store price at t=1_000.
+    env.ledger().set_timestamp(1_000);
+    env.ledger().set_sequence_number(1);
+    client.set_price(&asset, &1_500_i128, &2u32, &86_400u64);
+
+    // Advance past the 300-second boundary: t=1_000 + 300 + 1 = 1_301.
+    env.ledger().set_timestamp(1_301);
+    // This must panic with Error::StaleRateData (error code 25).
+    let _ = client.get_price(&asset, &true);
+}
+
+/// `get_last_price` must also panic when the rate map entry is too old,
+/// because it delegates to `get_price`.
+#[test]
+#[should_panic]
+fn test_get_last_price_panics_when_rate_map_exceeds_max_age() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+
+    let asset = symbol_short!("KES");
+    env.ledger().set_timestamp(2_000);
+    env.ledger().set_sequence_number(1);
+    client.set_price(&asset, &500_i128, &2u32, &86_400u64);
+
+    // Advance 301 seconds past the stored timestamp.
+    env.ledger().set_timestamp(2_301);
+    let _ = client.get_last_price(&asset);
+}
+
+/// Exactly at the boundary (current_time == stored_timestamp + MAX_RATE_AGE_SECONDS)
+/// the guard must NOT panic — the boundary is exclusive.
+#[test]
+fn test_get_price_at_exact_boundary_does_not_panic() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(PriceOracle, ());
+    let client = PriceOracleClient::new(&env, &contract_id);
+
+    let asset = symbol_short!("GHS");
+    env.ledger().set_timestamp(5_000);
+    env.ledger().set_sequence_number(1);
+    client.set_price(&asset, &800_i128, &2u32, &86_400u64);
+
+    // Exactly at boundary: 5_000 + 300 = 5_300.
+    env.ledger().set_timestamp(5_300);
+    let result = client.try_get_price(&asset, &true);
+    assert!(result.is_ok(), "expected Ok at exact boundary");
+}
