@@ -1,4 +1,6 @@
-use soroban_sdk::{contracttype, Address, Env, Vec};
+use soroban_sdk::{contracttype, panic_with_error, Address, Env, Vec};
+
+use crate::Error;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Storage Key
@@ -14,6 +16,8 @@ pub enum DataKey {
     ActiveRelayers,
     CommunityCouncil,
     EmergencyFrozen,
+    /// Emergency halt flag — set by multi-sig governance to block all rate reads.
+    EmergencyHalt,
     /// Expiry timestamp (seconds) until which safety checks are bypassed.
     BypassSafetyChecks,
     /// Auto-incrementing counter for multi-sig action proposals.
@@ -36,7 +40,7 @@ pub fn _get_admin(env: &Env) -> Vec<Address> {
     env.storage()
         .instance()
         .get(&DataKey::Admin)
-        .expect("Admin not set: contract not initialised")
+        .unwrap_or_else(|| panic_with_error!(env, Error::AdminNotSet))
 }
 
 pub fn _has_admin(env: &Env) -> bool {
@@ -54,7 +58,7 @@ pub fn _is_authorized(env: &Env, caller: &Address) -> bool {
 
 pub fn _require_authorized(env: &Env, caller: &Address) {
     if !_is_authorized(env, caller) {
-        panic!("Unauthorised: caller is not in the authorized admin list");
+        panic_with_error!(env, Error::NotAuthorized);
     }
 }
 
@@ -146,7 +150,7 @@ pub fn _is_provider(env: &Env, addr: &Address) -> bool {
 /// Panics if the caller is not a whitelisted provider.
 pub fn _require_provider(env: &Env, caller: &Address) {
     if !_is_provider(env, caller) {
-        panic!("Unauthorised: caller is not a whitelisted provider");
+        panic_with_error!(env, Error::ProviderNotAuthorized);
     }
 }
 
@@ -285,7 +289,7 @@ pub fn _is_council(env: &Env, caller: &Address) -> bool {
 /// Panic if the caller is not the Community Council.
 pub fn _require_council(env: &Env, caller: &Address) {
     if !_is_council(env, caller) {
-        panic!("Unauthorized: caller is not the Community Council");
+        panic_with_error!(env, Error::CouncilRequired);
     }
 }
 
@@ -307,7 +311,31 @@ pub fn _set_frozen(env: &Env, frozen: bool) {
 /// Panic if the contract is in emergency freeze state.
 pub fn _require_not_frozen(env: &Env) {
     if _is_frozen(env) {
-        panic!("Contract is in emergency freeze state");
+        panic_with_error!(env, Error::ContractFrozen);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Emergency Halt Helpers (multi-sig governance)
+// ─────────────────────────────────────────────────────────────────────────────
+
+pub fn _is_halted(env: &Env) -> bool {
+    env.storage()
+        .instance()
+        .get::<DataKey, bool>(&DataKey::EmergencyHalt)
+        .unwrap_or(false)
+}
+
+pub fn _set_halted(env: &Env, status: bool) {
+    env.storage()
+        .instance()
+        .set(&DataKey::EmergencyHalt, &status);
+}
+
+/// Panic if the emergency halt flag is active.
+pub fn _require_not_halted(env: &Env) {
+    if _is_halted(env) {
+        panic!("Contract is emergency halted: rate reads are disabled");
     }
 }
 
@@ -318,20 +346,20 @@ pub fn _require_not_frozen(env: &Env) {
 /// Store the expiry timestamp for the safety-checks bypass.
 pub fn _set_bypass_safety_checks(env: &Env, expiry: u64) {
     env.storage()
-        .instance()
+        .temporary()
         .set(&DataKey::BypassSafetyChecks, &expiry);
 }
 
 /// Remove the safety-checks bypass (disables it immediately).
 pub fn _remove_bypass_safety_checks(env: &Env) {
     env.storage()
-        .instance()
+        .temporary()
         .remove(&DataKey::BypassSafetyChecks);
 }
 
 /// Return the expiry timestamp of the safety-checks bypass, or None if not set.
 pub fn _get_bypass_expiry(env: &Env) -> Option<u64> {
-    env.storage().instance().get(&DataKey::BypassSafetyChecks)
+    env.storage().temporary().get(&DataKey::BypassSafetyChecks)
 }
 
 /// Return true if a bypass is set and has not yet expired.
@@ -491,7 +519,7 @@ mod auth_tests {
     }
 
     #[test]
-    #[should_panic(expected = "Unauthorised: caller is not in the authorized admin list")]
+    #[should_panic]
     fn test_require_authorized_panics_for_non_admin() {
         let (env, contract_id, _) = setup();
         let other = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
@@ -671,7 +699,7 @@ mod auth_tests {
     }
 
     #[test]
-    #[should_panic(expected = "Unauthorised: caller is not a whitelisted provider")]
+    #[should_panic]
     fn test_require_provider_panics_for_non_provider() {
         let (env, contract_id, _) = setup();
         let random = <soroban_sdk::Address as soroban_sdk::testutils::Address>::generate(&env);
