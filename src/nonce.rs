@@ -1,3 +1,4 @@
+use crate::ContractError;
 use soroban_sdk::{contracttype, Address, Bytes, BytesN, Env};
 
 use crate::ContractError;
@@ -32,7 +33,7 @@ pub fn consume_nonce(
 
     let expected_signature = derive_salt_signature(env, incoming_nonce, salt);
     if salt_signature != expected_signature {
-        return Err(ContractError::InvalidNonce);
+        return Err(ContractError::InvalidSaltSignature);
     }
 
     let next_state = NonceState {
