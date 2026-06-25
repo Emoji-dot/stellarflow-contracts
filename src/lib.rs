@@ -6,6 +6,8 @@ use crate::nonce::{consume_nonce, get_nonce};
 
 pub mod consensus;
 pub mod staking_tiers;
+pub mod governance;
+use crate::governance::{verify_staged_delay, StagedUpgrade};
 
 pub use staking_tiers::{AssetFeedMetrics, StakingTier, StakingTierConfig};
 use staking_tiers::{
@@ -67,14 +69,6 @@ pub struct RevocationProposal {
     pub proposer: Address,
     pub proposed_at: u64,
     pub votes: Map<Address, ()>,
-}
-
-#[contracttype]
-#[derive(Clone)]
-pub struct PendingUpgrade {
-    pub new_wasm_hash: BytesN<32>,
-    pub proposed_at: u64,
-    pub proposer: Address,
 }
 
 #[contracttype]
@@ -230,8 +224,8 @@ impl TimeLockedUpgradeContract {
         if data.admin != proposer { return Err(ContractError::NotAdmin); }
         proposer.require_auth();
         consume_nonce(&env, &proposer, nonce, salt, salt_signature);
-        let pending = PendingUpgrade { new_wasm_hash, proposed_at: env.ledger().timestamp(), proposer };
-        env.storage().instance().set(&PENDING_UPGRADE_KEY, &pending);
+        let staged = StagedUpgrade { wasm_hash: new_wasm_hash.into(), staged_at: env.ledger().sequence() };
+        env.storage().instance().set(&PENDING_UPGRADE_KEY, &staged);
         Ok(())
     }
 
@@ -241,23 +235,22 @@ impl TimeLockedUpgradeContract {
         if data.admin != executor { return Err(ContractError::NotAdmin); }
         executor.require_auth();
         consume_nonce(&env, &executor, nonce, salt, signature)?;
-        let pending: PendingUpgrade = env.storage().instance().get(&PENDING_UPGRADE_KEY).ok_or(ContractError::NoPendingUpgrade)?;
-        if env.ledger().timestamp().saturating_sub(pending.proposed_at) < UPGRADE_DELAY_SECONDS {
+        let pending: StagedUpgrade = env.storage().instance().get(&PENDING_UPGRADE_KEY).ok_or(ContractError::NoPendingUpgrade)?;
+        if !verify_staged_delay(pending.staged_at, env.ledger().sequence()) {
             return Err(ContractError::UpgradeTimelockNotSatisfied);
         }
-        env.deployer().update_current_contract_wasm(pending.new_wasm_hash);
+        env.deployer().update_current_contract_wasm(BytesN::from_array(&env, &pending.wasm_hash));
         env.storage().instance().remove(&PENDING_UPGRADE_KEY);
         Ok(())
     }
 
-    pub fn get_pending_upgrade(env: Env) -> Option<PendingUpgrade> {
+    pub fn get_pending_upgrade(env: Env) -> Option<StagedUpgrade> {
         env.storage().instance().get(&PENDING_UPGRADE_KEY)
     }
 
-    pub fn get_upgrade_timelock_remaining(env: Env) -> Option<u64> {
-        env.storage().instance().get(&PENDING_UPGRADE_KEY).map(|pending: PendingUpgrade| {
-            let elapsed = env.ledger().timestamp().saturating_sub(pending.proposed_at);
-            UPGRADE_DELAY_SECONDS.saturating_sub(elapsed)
+    pub fn get_upgrade_timelock_remaining(env: Env) -> Option<u32> {
+        env.storage().instance().get(&PENDING_UPGRADE_KEY).map(|staged: StagedUpgrade| {
+            5000u32.saturating_sub(env.ledger().sequence().saturating_sub(staged.staged_at))
         })
     }
 
