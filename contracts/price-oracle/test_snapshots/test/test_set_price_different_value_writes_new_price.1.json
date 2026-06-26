@@ -35,6 +35,14 @@
                 ]
               },
               "durability": "persistent",
+                    "symbol": "VerifiedPrice"
+                  },
+                  {
+                    "symbol": "KES"
+                  }
+                ]
+              },
+              "durability": "temporary",
               "val": {
                 "map": [
                   {
@@ -92,6 +100,50 @@
                           }
                         }
                       ]
+                      "symbol": "confidence_score"
+                    },
+                    "val": {
+                      "u32": 100
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "decimals"
+                    },
+                    "val": {
+                      "u32": 2
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "price"
+                    },
+                    "val": {
+                      "i128": "850"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "provider"
+                    },
+                    "val": {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "timestamp"
+                    },
+                    "val": {
+                      "u64": "2001000"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "ttl"
+                    },
+                    "val": {
+                      "u64": "3600"
                     }
                   }
                 ]
@@ -101,6 +153,7 @@
           "ext": "v0"
         },
         "live_until": 4096
+        "live_until": 16
       },
       {
         "entry": {

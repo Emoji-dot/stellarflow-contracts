@@ -57,6 +57,14 @@
                 ]
               },
               "durability": "persistent",
+                    "symbol": "VerifiedPrice"
+                  },
+                  {
+                    "symbol": "ZAR"
+                  }
+                ]
+              },
+              "durability": "temporary",
               "val": {
                 "map": [
                   {
@@ -114,6 +122,50 @@
                           }
                         }
                       ]
+                      "symbol": "confidence_score"
+                    },
+                    "val": {
+                      "u32": 0
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "decimals"
+                    },
+                    "val": {
+                      "u32": 0
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "price"
+                    },
+                    "val": {
+                      "i128": "0"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "provider"
+                    },
+                    "val": {
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "timestamp"
+                    },
+                    "val": {
+                      "u64": "0"
+                    }
+                  },
+                  {
+                    "key": {
+                      "symbol": "ttl"
+                    },
+                    "val": {
+                      "u64": "0"
                     }
                   }
                 ]
@@ -123,6 +175,7 @@
           "ext": "v0"
         },
         "live_until": 4095
+        "live_until": 15
       },
       {
         "entry": {
