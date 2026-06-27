@@ -123,6 +123,8 @@ const TREASURY_KEY: Symbol = symbol_short!("TREASURY");
 // Telemetry TTL configuration: expire after validation window closes
 const HEARTBEAT_TTL_LEDGERS: u32 = 17_280; // ~24 hours at 5s/ledger
 const HEARTBEAT_TTL_THRESHOLD: u32 = 5_000; // Extend when < 5000 ledgers remain
+/// Number of ledgers to extend the contract instance TTL by on admin actions.
+const INSTANCE_TTL_EXTEND: u32 = 10_000;
 
 #[contracttype]
 #[derive(Clone)]
@@ -244,6 +246,7 @@ impl TimeLockedUpgradeContract {
         // Refactored for Issue #370: Zero-Allocation removal with Map
         signers.remove(signer);
         env.storage().instance().set(&SIGNERS_KEY, &signers);
+        Self::_extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -292,6 +295,7 @@ impl TimeLockedUpgradeContract {
         consume_nonce(&env, &proposer, nonce, salt, salt_signature);
         let staged = StagedUpgrade { wasm_hash: new_wasm_hash.into(), staged_at: env.ledger().sequence() };
         env.storage().instance().set(&PENDING_UPGRADE_KEY, &staged);
+        Self::_extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -307,6 +311,7 @@ impl TimeLockedUpgradeContract {
         }
         env.deployer().update_current_contract_wasm(BytesN::from_array(&env, &pending.wasm_hash));
         env.storage().instance().remove(&PENDING_UPGRADE_KEY);
+        Self::_extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -325,6 +330,7 @@ impl TimeLockedUpgradeContract {
         if data.admin != canceller { return Err(ContractError::NotAdmin); }
         canceller.require_auth();
         env.storage().instance().remove(&PENDING_UPGRADE_KEY);
+        Self::_extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -340,6 +346,7 @@ impl TimeLockedUpgradeContract {
         data.value = new_value;
         env.storage().instance().set(&DATA_KEY, &data);
         Self::_record_heartbeat(&env, symbol_short!("VALUE"));
+        Self::_extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -362,6 +369,7 @@ impl TimeLockedUpgradeContract {
         if data.admin != admin { return Err(ContractError::NotAdmin); }
         admin.require_auth();
         env.storage().instance().set(&HB_INTERVAL_KEY, &interval);
+        Self::_extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -391,6 +399,7 @@ impl TimeLockedUpgradeContract {
         if data.admin != updater { return Err(ContractError::NotAdmin); }
         updater.require_auth();
         Self::_record_heartbeat(&env, asset);
+        Self::_extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -408,6 +417,7 @@ impl TimeLockedUpgradeContract {
         let mut profiles = Self::_get_node_profiles(&env);
         profiles.set(node.clone(), NodeProfile { node, rate, confidence, updated_at: env.ledger().timestamp() });
         env.storage().persistent().set(&NODE_PROFILES_KEY, &profiles);
+        Self::_extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -446,6 +456,7 @@ impl TimeLockedUpgradeContract {
         env.storage()
             .instance()
             .set(&StakingStorageKey::TierConfig, &config);
+        Self::_extend_instance_ttl(&env);
         Ok(())
     }
 
@@ -485,6 +496,7 @@ impl TimeLockedUpgradeContract {
             .persistent()
             .set(&StakingStorageKey::AssetMetrics(asset.clone()), &metrics);
 
+        Self::_extend_instance_ttl(&env);
         Ok(metrics)
     }
 
@@ -633,17 +645,22 @@ impl TimeLockedUpgradeContract {
             signers.set(signer, ());
             env.storage().instance().set(&SIGNERS_KEY, &signers);
         }
+        Self::_extend_instance_ttl(&env);
         Ok(())
     }
 
     // --- Admin Ownership Transfer (Issue #429) ---
 
     pub fn propose_ownership_transfer(env: Env, current_admin: Address, nominee: Address) -> Result<(), ContractError> {
-        admin::propose_ownership_transfer(&env, current_admin, nominee)
+        admin::propose_ownership_transfer(&env, current_admin, nominee)?;
+        Self::_extend_instance_ttl(&env);
+        Ok(())
     }
 
     pub fn claim_ownership(env: Env, claimer: Address) -> Result<(), ContractError> {
-        admin::claim_ownership(&env, claimer)
+        admin::claim_ownership(&env, claimer)?;
+        Self::_extend_instance_ttl(&env);
+        Ok(())
     }
 
     // #439: read-only treasury accessor; no setter exposed
@@ -711,6 +728,13 @@ impl TimeLockedUpgradeContract {
             &NODE_PROFILES_KEY,
             RELAYER_TTL_THRESHOLD,
             env.storage().max_ttl(),
+        );
+    }
+
+    fn _extend_instance_ttl(env: &Env) {
+        env.storage().instance().extend_ttl(
+            RELAYER_TTL_THRESHOLD,
+            RELAYER_TTL_THRESHOLD + INSTANCE_TTL_EXTEND,
         );
     }
 
