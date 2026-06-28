@@ -59,6 +59,7 @@ pub mod admin;
 pub mod auth;
 pub mod consensus;
 pub mod staking_tiers;
+pub mod storage;
 pub mod validation;
 use crate::validation::check_bond_capacity;
 pub mod governance;
@@ -124,6 +125,7 @@ const HEARTBEAT_KEY: Symbol = symbol_short!("HBEAT");
 const HB_INTERVAL_KEY: Symbol = symbol_short!("HBINTV");
 pub(crate) const DEFAULT_HEARTBEAT_INTERVAL: u64 = 5 * 60;
 pub(crate) const SIGNERS_KEY: Symbol = symbol_short!("SIGNERS");
+pub(crate) const VALIDATOR_STATE_KEY: Symbol = symbol_short!("VLSTATE");
 const REVOCATION_KEY: Symbol = symbol_short!("REVOKE");
 // Emergency key revocation / blocking
 pub(crate) const REVOKED_SIGNER_KEY: Symbol = symbol_short!("REVOKED");
