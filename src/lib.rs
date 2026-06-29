@@ -67,6 +67,7 @@ pub use config::{PriceVarianceConfig, get_price_variance_config, set_price_varia
 pub mod consensus;
 pub mod governance;
 pub mod math;
+pub mod slashing;
 pub mod staking_tiers;
 pub mod storage;
 pub mod validation;
