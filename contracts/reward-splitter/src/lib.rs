@@ -1,7 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, panic_with_error, token, Address, Env, String, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, token, Address, Env, String, Vec,
 };
 
 #[derive(Clone)]
@@ -262,7 +262,7 @@ impl RewardSplitter {
         for r in recipients.iter() {
             if r.address == recipient {
                 new_recipients.push_back(Recipient {
-                    address: recipient,
+                    address: recipient.clone(),
                     share: new_share,
                 });
             } else {
@@ -521,7 +521,7 @@ impl RewardSplitter {
         // Execute the action based on type
         match action.action_type {
             CooldownActionType::UpdateToken => {
-                let new_token: Address = Address::from_string(&env, &action.data);
+                let new_token: Address = Address::from_string(&action.data);
                 env.storage().instance().set(&DataKey::Token, &new_token);
             }
             CooldownActionType::ResetParameters => {

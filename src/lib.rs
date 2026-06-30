@@ -75,9 +75,8 @@ pub mod validation;
 use crate::validation::check_bond_capacity;
 use crate::governance::{verify_staged_delay, StagedUpgrade};
 use crate::temp_governance::{
-    store_temp_proposal, get_temp_proposal, has_temp_proposal, remove_temp_proposal,
-    extend_temp_proposal_ttl, EMERGENCY_REVOCATION_TEMP_KEY, REVOCATION_TEMP_KEY,
-    DEFAULT_PROPOSAL_TTL, EXTENDED_PROPOSAL_TTL
+    store_temp_proposal, get_temp_proposal, remove_temp_proposal,
+    REVOCATION_TEMP_KEY, EXTENDED_PROPOSAL_TTL
 };
 
 pub use staking_tiers::{AssetFeedMetrics, StakingTier, StakingTierConfig};
@@ -980,7 +979,7 @@ impl TimeLockedUpgradeContract {
     ///
     /// This can be called by any party since the primary security model relies on
     /// the voting threshold for proposal execution, not on proposal creation.
-    pub fn purge_expired_revocation_proposal(env: Env) -> Result<(), ContractError> {
+    pub fn purge_revocation_proposal(env: Env) -> Result<(), ContractError> {
         admin::purge_emergency_revocation_proposal(&env)
     }
 

@@ -15,7 +15,7 @@
 //! 3. Upon execution, proposal is explicitly removed
 //! 4. If voting expires without reaching threshold, network auto-purges after TTL
 
-use soroban_sdk::{symbol_short, Env, Symbol, contracttype};
+use soroban_sdk::{symbol_short, Env, Symbol, IntoVal, TryFromVal};
 
 // ── Temporary proposal storage keys ──────────────────────────────────────
 
@@ -47,12 +47,14 @@ pub const EXTENDED_PROPOSAL_TTL: u32 = 259_200; // ~15 days
 /// * `key` - Storage key for the proposal
 /// * `proposal` - The proposal data to store
 /// * `ttl` - Time-to-live in ledgers (auto-cleanup after this duration)
-pub fn store_temp_proposal<T: soroban_sdk::Contracttype>(
+pub fn store_temp_proposal<T>(
     env: &Env,
     key: &Symbol,
     proposal: &T,
     ttl: u32,
-) {
+) where
+    T: IntoVal<Env, soroban_sdk::Val>,
+{
     env.storage().temporary().set(key, proposal);
     // Note: Temporary storage TTL is managed automatically by the Soroban network.
     // The `extend_ttl` method keeps the entry alive by preventing expiration.
@@ -62,10 +64,13 @@ pub fn store_temp_proposal<T: soroban_sdk::Contracttype>(
 /// Retrieve a proposal from temporary storage.
 ///
 /// Returns None if the proposal has expired or doesn't exist.
-pub fn get_temp_proposal<T: soroban_sdk::Contracttype>(
+pub fn get_temp_proposal<T>(
     env: &Env,
     key: &Symbol,
-) -> Option<T> {
+) -> Option<T>
+where
+    T: TryFromVal<Env, soroban_sdk::Val>,
+{
     env.storage().temporary().get(key)
 }
 
@@ -94,7 +99,7 @@ pub fn extend_temp_proposal_ttl(env: &Env, key: &Symbol, ttl: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::testutils::{Address as _, Env as _};
+    use soroban_sdk::Env;
 
     #[test]
     fn test_temp_proposal_storage() {

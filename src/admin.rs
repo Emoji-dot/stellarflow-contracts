@@ -1,7 +1,7 @@
 use crate::{ContractData, ContractError, DATA_KEY, REVOKED_SIGNER_KEY, SIGNERS_KEY};
 use crate::temp_governance::{
     store_temp_proposal, get_temp_proposal, has_temp_proposal, remove_temp_proposal,
-    extend_temp_proposal_ttl, EMERGENCY_REVOCATION_TEMP_KEY,
+    EMERGENCY_REVOCATION_TEMP_KEY,
     DEFAULT_PROPOSAL_TTL, EXTENDED_PROPOSAL_TTL
 };
 use soroban_sdk::{contracttype, symbol_short, Address, Env, Map, Symbol};

@@ -257,7 +257,6 @@ pub fn _is_provider(env: &Env, addr: &Address) -> bool {
         return false;
     }
 
-    env.storage()
     // 1. Direct provider whitelist check
     if env
         .storage()

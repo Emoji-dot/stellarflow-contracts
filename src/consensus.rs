@@ -251,10 +251,148 @@ pub fn verify_and_update_block_gap(
     Ok(())
 }
 
+/// Maximum number of active reporting validators supported by the stack-based array.
+pub const MAX_ACTIVE_VALIDATORS: usize = 16;
+
+/// Stack-allocated validator registry using a flat array configuration.
+/// This eliminates heap allocations during validator confirmation checks,
+/// significantly reducing gas costs under heavy transaction loads.
+/// 
+/// Note: This is a pure Rust struct (not #[contracttype]) designed for in-function
+/// stack allocation. Store validated IDs separately in contract storage if persistence is needed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ValidatorRegistry {
+    /// Flat array of validator IDs in sorted order for binary search.
+    /// Unused slots are filled with u32::MAX.
+    pub validator_ids: [u32; MAX_ACTIVE_VALIDATORS],
+    /// Number of active validators in the registry (0..=MAX_ACTIVE_VALIDATORS).
+    pub count: usize,
+}
+
+impl ValidatorRegistry {
+    /// Create an empty validator registry.
+    pub const fn new() -> Self {
+        Self {
+            validator_ids: [u32::MAX; MAX_ACTIVE_VALIDATORS],
+            count: 0,
+        }
+    }
+
+    /// Check if a validator ID is registered using fast binary search.
+    /// 
+    /// Time complexity: O(log n) where n is the number of active validators.
+    pub fn is_registered(&self, validator_id: u32) -> bool {
+        if self.count == 0 {
+            return false;
+        }
+
+        let active_slice = &self.validator_ids[..self.count];
+        active_slice.binary_search(&validator_id).is_ok()
+    }
+
+    /// Register a new validator ID in the sorted array.
+    /// 
+    /// Returns `Err(ContractError::Overflow)` if the registry is full.
+    /// Returns `Err(ContractError::AlreadyRegistered)` if the ID is already present.
+    pub fn register(&mut self, validator_id: u32) -> Result<(), ContractError> {
+        if self.count >= MAX_ACTIVE_VALIDATORS {
+            return Err(ContractError::Overflow);
+        }
+
+        let active_slice = &self.validator_ids[..self.count];
+        
+        match active_slice.binary_search(&validator_id) {
+            Ok(_) => Err(ContractError::AlreadyRegistered),
+            Err(insert_pos) => {
+                // Shift elements to the right to maintain sorted order
+                for i in (insert_pos..self.count).rev() {
+                    self.validator_ids[i + 1] = self.validator_ids[i];
+                }
+                self.validator_ids[insert_pos] = validator_id;
+                self.count += 1;
+                Ok(())
+            }
+        }
+    }
+
+    /// Remove a validator ID from the registry.
+    /// 
+    /// Returns `Err(ContractError::NotRegistered)` if the ID is not found.
+    pub fn unregister(&mut self, validator_id: u32) -> Result<(), ContractError> {
+        if self.count == 0 {
+            return Err(ContractError::NotRegistered);
+        }
+
+        let active_slice = &self.validator_ids[..self.count];
+        
+        match active_slice.binary_search(&validator_id) {
+            Err(_) => Err(ContractError::NotRegistered),
+            Ok(remove_pos) => {
+                // Shift elements to the left to maintain sorted order
+                for i in remove_pos..(self.count - 1) {
+                    self.validator_ids[i] = self.validator_ids[i + 1];
+                }
+                self.validator_ids[self.count - 1] = u32::MAX;
+                self.count -= 1;
+                Ok(())
+            }
+        }
+    }
+
+    /// Get the number of active validators.
+    pub const fn len(&self) -> usize {
+        self.count
+    }
+
+    /// Check if the registry is empty.
+    pub const fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
+    /// Check if the registry is full.
+    pub const fn is_full(&self) -> bool {
+        self.count >= MAX_ACTIVE_VALIDATORS
+    }
+}
+
+impl Default for ValidatorRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Verify that a validator is actively registered before processing their submission.
+/// 
+/// This function uses stack-based binary search to efficiently confirm validator
+/// identity without heap allocations, reducing gas costs under heavy loads.
+pub fn verify_active_validator(
+    registry: &ValidatorRegistry,
+    validator_id: u32,
+) -> Result<(), ContractError> {
+    if registry.is_registered(validator_id) {
+        Ok(())
+    } else {
+        Err(ContractError::NotRegistered)
+    }
+}
+
+/// Batch verify multiple validator IDs against the active registry.
+/// 
+/// Returns `Ok(())` if all validators are registered, otherwise returns
+/// `Err(ContractError::NotRegistered)` on the first unregistered validator.
+pub fn verify_validators_batch(
+    registry: &ValidatorRegistry,
+    validator_ids: &[u32],
+) -> Result<(), ContractError> {
+    for &validator_id in validator_ids {
+        verify_active_validator(registry, validator_id)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
     use soroban_sdk::Env;
 
     fn make_entries(env: &Env, pairs: &[(u64, u64)]) -> Vec<WeightedEntry> {
@@ -483,5 +621,270 @@ mod tests {
             let events = env.events().all();
             assert!(events.len() > 0);
         });
+    }
+
+    // --- ValidatorRegistry tests ---
+
+    #[test]
+    fn test_validator_registry_new() {
+        let registry = ValidatorRegistry::new();
+        assert_eq!(registry.count, 0);
+        assert!(registry.is_empty());
+        assert!(!registry.is_full());
+    }
+
+    #[test]
+    fn test_validator_registry_register_single() {
+        let mut registry = ValidatorRegistry::new();
+        assert!(registry.register(100).is_ok());
+        assert_eq!(registry.count, 1);
+        assert!(registry.is_registered(100));
+        assert!(!registry.is_registered(99));
+    }
+
+    #[test]
+    fn test_validator_registry_register_maintains_sorted_order() {
+        let mut registry = ValidatorRegistry::new();
+        // Register in random order
+        assert!(registry.register(50).is_ok());
+        assert!(registry.register(10).is_ok());
+        assert!(registry.register(30).is_ok());
+        assert!(registry.register(20).is_ok());
+        assert!(registry.register(40).is_ok());
+
+        assert_eq!(registry.count, 5);
+        // Verify sorted order
+        assert_eq!(registry.validator_ids[0], 10);
+        assert_eq!(registry.validator_ids[1], 20);
+        assert_eq!(registry.validator_ids[2], 30);
+        assert_eq!(registry.validator_ids[3], 40);
+        assert_eq!(registry.validator_ids[4], 50);
+    }
+
+    #[test]
+    fn test_validator_registry_register_duplicate_fails() {
+        let mut registry = ValidatorRegistry::new();
+        assert!(registry.register(100).is_ok());
+        assert_eq!(registry.register(100), Err(ContractError::AlreadyRegistered));
+        assert_eq!(registry.count, 1);
+    }
+
+    #[test]
+    fn test_validator_registry_register_full_capacity() {
+        let mut registry = ValidatorRegistry::new();
+        // Fill the registry to capacity
+        for i in 0..MAX_ACTIVE_VALIDATORS {
+            assert!(registry.register(i as u32).is_ok());
+        }
+        assert_eq!(registry.len(), MAX_ACTIVE_VALIDATORS);
+        assert!(registry.is_full());
+        
+        // Attempting to register one more should fail
+        assert_eq!(registry.register(999), Err(ContractError::Overflow));
+    }
+
+    #[test]
+    fn test_validator_registry_unregister_single() {
+        let mut registry = ValidatorRegistry::new();
+        assert!(registry.register(100).is_ok());
+        assert!(registry.is_registered(100));
+        
+        assert!(registry.unregister(100).is_ok());
+        assert_eq!(registry.count, 0);
+        assert!(!registry.is_registered(100));
+    }
+
+    #[test]
+    fn test_validator_registry_unregister_not_found() {
+        let mut registry = ValidatorRegistry::new();
+        assert!(registry.register(100).is_ok());
+        
+        assert_eq!(registry.unregister(200), Err(ContractError::NotRegistered));
+        assert_eq!(registry.count, 1);
+    }
+
+    #[test]
+    fn test_validator_registry_unregister_from_empty() {
+        let mut registry = ValidatorRegistry::new();
+        assert_eq!(registry.unregister(100), Err(ContractError::NotRegistered));
+    }
+
+    #[test]
+    fn test_validator_registry_unregister_maintains_sorted_order() {
+        let mut registry = ValidatorRegistry::new();
+        for i in [10, 20, 30, 40, 50] {
+            assert!(registry.register(i).is_ok());
+        }
+
+        // Remove from middle
+        assert!(registry.unregister(30).is_ok());
+        assert_eq!(registry.count, 4);
+        assert_eq!(registry.validator_ids[0], 10);
+        assert_eq!(registry.validator_ids[1], 20);
+        assert_eq!(registry.validator_ids[2], 40);
+        assert_eq!(registry.validator_ids[3], 50);
+        assert_eq!(registry.validator_ids[4], u32::MAX); // Cleared slot
+    }
+
+    #[test]
+    fn test_validator_registry_is_registered_binary_search() {
+        let mut registry = ValidatorRegistry::new();
+        let ids = [5, 15, 25, 35, 45, 55, 65, 75, 85, 95];
+        
+        for &id in &ids {
+            assert!(registry.register(id).is_ok());
+        }
+
+        // Test all registered IDs
+        for &id in &ids {
+            assert!(registry.is_registered(id));
+        }
+
+        // Test unregistered IDs
+        assert!(!registry.is_registered(0));
+        assert!(!registry.is_registered(10));
+        assert!(!registry.is_registered(20));
+        assert!(!registry.is_registered(100));
+    }
+
+    #[test]
+    fn test_verify_active_validator_success() {
+        let mut registry = ValidatorRegistry::new();
+        assert!(registry.register(42).is_ok());
+        
+        assert!(verify_active_validator(&registry, 42).is_ok());
+    }
+
+    #[test]
+    fn test_verify_active_validator_failure() {
+        let mut registry = ValidatorRegistry::new();
+        assert!(registry.register(42).is_ok());
+        
+        assert_eq!(
+            verify_active_validator(&registry, 99),
+            Err(ContractError::NotRegistered)
+        );
+    }
+
+    #[test]
+    fn test_verify_validators_batch_all_valid() {
+        let mut registry = ValidatorRegistry::new();
+        for id in [10, 20, 30, 40, 50] {
+            assert!(registry.register(id).is_ok());
+        }
+
+        let batch = [10, 30, 50];
+        assert!(verify_validators_batch(&registry, &batch).is_ok());
+    }
+
+    #[test]
+    fn test_verify_validators_batch_one_invalid() {
+        let mut registry = ValidatorRegistry::new();
+        for id in [10, 20, 30] {
+            assert!(registry.register(id).is_ok());
+        }
+
+        let batch = [10, 20, 40]; // 40 is not registered
+        assert_eq!(
+            verify_validators_batch(&registry, &batch),
+            Err(ContractError::NotRegistered)
+        );
+    }
+
+    #[test]
+    fn test_verify_validators_batch_empty_registry() {
+        let registry = ValidatorRegistry::new();
+        let batch = [10, 20];
+        
+        assert_eq!(
+            verify_validators_batch(&registry, &batch),
+            Err(ContractError::NotRegistered)
+        );
+    }
+
+    #[test]
+    fn test_verify_validators_batch_empty_batch() {
+        let mut registry = ValidatorRegistry::new();
+        assert!(registry.register(10).is_ok());
+        
+        let batch: [u32; 0] = [];
+        assert!(verify_validators_batch(&registry, &batch).is_ok());
+    }
+
+    #[test]
+    fn test_validator_registry_stress_test() {
+        let mut registry = ValidatorRegistry::new();
+        
+        // Register validators in reverse order
+        for i in (0..MAX_ACTIVE_VALIDATORS).rev() {
+            assert!(registry.register(i as u32).is_ok());
+        }
+
+        // Verify all are registered and in sorted order
+        for i in 0..MAX_ACTIVE_VALIDATORS {
+            assert!(registry.is_registered(i as u32));
+            assert_eq!(registry.validator_ids[i], i as u32);
+        }
+
+        // Unregister every other validator
+        for i in (0..MAX_ACTIVE_VALIDATORS).step_by(2) {
+            assert!(registry.unregister(i as u32).is_ok());
+        }
+
+        assert_eq!(registry.len(), MAX_ACTIVE_VALIDATORS / 2);
+
+        // Verify remaining validators
+        for i in 0..MAX_ACTIVE_VALIDATORS {
+            if i % 2 == 0 {
+                assert!(!registry.is_registered(i as u32));
+            } else {
+                assert!(registry.is_registered(i as u32));
+            }
+        }
+    }
+
+    #[test]
+    fn test_validator_registry_edge_case_min_max_values() {
+        let mut registry = ValidatorRegistry::new();
+        
+        // Test with extreme u32 values
+        assert!(registry.register(0).is_ok());
+        assert!(registry.register(u32::MAX - 1).is_ok()); // u32::MAX is reserved for empty slots
+        assert!(registry.register(1).is_ok());
+        assert!(registry.register(u32::MAX - 2).is_ok());
+
+        assert_eq!(registry.len(), 4);
+        assert!(registry.is_registered(0));
+        assert!(registry.is_registered(1));
+        assert!(registry.is_registered(u32::MAX - 2));
+        assert!(registry.is_registered(u32::MAX - 1));
+        
+        // Verify sorted order
+        assert_eq!(registry.validator_ids[0], 0);
+        assert_eq!(registry.validator_ids[1], 1);
+        assert_eq!(registry.validator_ids[2], u32::MAX - 2);
+        assert_eq!(registry.validator_ids[3], u32::MAX - 1);
+    }
+
+    #[test]
+    fn test_validator_registry_len_and_empty_checks() {
+        let mut registry = ValidatorRegistry::new();
+        
+        assert_eq!(registry.len(), 0);
+        assert!(registry.is_empty());
+        assert!(!registry.is_full());
+
+        registry.register(10).unwrap();
+        assert_eq!(registry.len(), 1);
+        assert!(!registry.is_empty());
+        assert!(!registry.is_full());
+
+        for i in 1..MAX_ACTIVE_VALIDATORS {
+            registry.register(i as u32 * 10).unwrap();
+        }
+        
+        assert_eq!(registry.len(), MAX_ACTIVE_VALIDATORS);
+        assert!(!registry.is_empty());
+        assert!(registry.is_full());
     }
 }

@@ -52,12 +52,19 @@ pub fn require_multisig(env: &Env, signers: &Vec<Address>) -> Result<(), Contrac
         .ok_or(ContractError::NotInitialized)?;
 
     let mut valid_count = 0u32;
-    let signers_slice = signers.iter();
 
-    // Use slice-based iteration to avoid heap allocations
-    for (idx, signer) in signers_slice.clone().enumerate() {
-        // Avoid repeated signature validation for duplicate signers using slice comparison
-        let is_duplicate = signers_slice.clone().take(idx).any(|previous| previous == signer);
+    // Use index-based iteration to avoid heap allocations and cloning issues
+    for idx in 0..signers.len() {
+        let signer = signers.get(idx).unwrap();
+        
+        // Avoid repeated signature validation for duplicate signers using manual comparison
+        let mut is_duplicate = false;
+        for prev_idx in 0..idx {
+            if signers.get(prev_idx).unwrap() == signer {
+                is_duplicate = true;
+                break;
+            }
+        }
         if is_duplicate {
             continue;
         }
